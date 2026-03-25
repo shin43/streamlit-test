@@ -7,6 +7,7 @@ from __future__ import annotations
 import hashlib
 import sqlite3
 import time
+import io
 from pathlib import Path
 
 import numpy as np
@@ -15,6 +16,7 @@ import plotly.graph_objects as go
 import streamlit as st
 
 DB_PATH = Path(__file__).resolve().parent / "marketing.db"
+UPLOADED_CSV_TABLE = "uploaded_csv"
 ADMIN_USER = "admin"
 # SHA-256("admin1234") — 로그인 시 입력 비밀번호의 SHA-256과 비교
 ADMIN_PASSWORD_SHA256 = (
@@ -122,6 +124,69 @@ def render_login() -> None:
     st.rerun()
 
 
+def _read_uploaded_csv_bytes(raw: bytes) -> pd.DataFrame:
+    bio = io.BytesIO(raw)
+    for enc in ("utf-8-sig", "utf-8", "cp949"):
+        bio.seek(0)
+        try:
+            return pd.read_csv(bio, encoding=enc)
+        except UnicodeDecodeError:
+            continue
+    bio.seek(0)
+    return pd.read_csv(bio, encoding="utf-8", errors="replace")
+
+
+def render_csv_upload() -> None:
+    st.subheader("CSV 업로드")
+    st.caption(
+        f"저장 시 `{UPLOADED_CSV_TABLE}` 테이블을 **덮어씁니다** (`marketing.db`). "
+        "UTF-8( BOM )·CP949 등을 순서대로 시도합니다."
+    )
+    up = st.file_uploader("CSV 파일", type=["csv"])
+    if up is None:
+        st.info("CSV를 선택하면 미리보기·차트·DB 저장을 사용할 수 있습니다.")
+        return
+    try:
+        udf = _read_uploaded_csv_bytes(up.getvalue())
+    except Exception as e:
+        st.error(f"CSV를 읽는 중 오류가 났습니다: {e}")
+        return
+    if udf.empty or len(udf.columns) == 0:
+        st.warning("빈 파일이거나 컬럼이 없습니다.")
+        return
+
+    st.write(f"**행** {len(udf):,} · **열** {len(udf.columns)}")
+    st.dataframe(udf.head(50), use_container_width=True, hide_index=True)
+
+    cols = list(udf.columns)
+    cx, cy = st.columns(2)
+    with cx:
+        x_col = st.selectbox("X축", options=cols, key="csv_uploader_x")
+    with cy:
+        y_idx = 1 if len(cols) > 1 else 0
+        y_col = st.selectbox("Y축", options=cols, index=y_idx, key="csv_uploader_y")
+
+    plot = udf[[x_col, y_col]].copy()
+    plot["_y"] = pd.to_numeric(plot[y_col], errors="coerce")
+    plot = plot.dropna(subset=["_y"])
+    if plot.empty:
+        st.warning("Y축을 숫자로 해석할 수 있는 행이 없습니다.")
+    else:
+        agg = plot.groupby(x_col, sort=False)["_y"].sum()
+        st.bar_chart(agg)
+
+    if st.button("DB에 저장", type="primary", key="csv_save_to_db"):
+        to_save = udf.copy()
+        to_save["_uploaded_at"] = time.strftime("%Y-%m-%dT%H:%M:%S")
+        conn = sqlite3.connect(DB_PATH)
+        try:
+            to_save.to_sql(UPLOADED_CSV_TABLE, conn, if_exists="replace", index=False)
+            conn.commit()
+        finally:
+            conn.close()
+        st.success(f"`{UPLOADED_CSV_TABLE}` 테이블에 {len(to_save):,}행을 저장했습니다.")
+
+
 def render_dashboard(df: pd.DataFrame) -> None:
     st.title("마케팅 성과 대시보드")
     st.caption("`marketing.db` · `daily_report` 기준 일별·채널·캠페인 지표")
@@ -164,10 +229,19 @@ def render_dashboard(df: pd.DataFrame) -> None:
     )
     f = df.loc[mask].copy()
 
-    if f.empty:
-        st.warning("선택한 필터에 해당하는 데이터가 없습니다.")
-        return
+    tab_dash, tab_query = st.tabs(["대시보드", "데이터 조회"])
+    with tab_dash:
+        if f.empty:
+            st.warning("선택한 필터에 해당하는 데이터가 없습니다.")
+        else:
+            render_dashboard_main(f)
+    with tab_query:
+        _sub_csv, = st.tabs(["CSV 업로드"])
+        with _sub_csv:
+            render_csv_upload()
 
+
+def render_dashboard_main(f: pd.DataFrame) -> None:
     total_cost = int(f["cost"].sum())
     total_rev = int(f["revenue"].sum())
     total_conv = int(f["conversions"].sum())
