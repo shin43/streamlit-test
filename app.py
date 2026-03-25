@@ -136,11 +136,22 @@ def render_dashboard(df: pd.DataFrame) -> None:
     total_conv = int(f["conversions"].sum())
     roas = total_rev / total_cost if total_cost else 0.0
 
+    total_clicks = int(f["clicks"].sum())
+    total_impressions = int(f["impressions"].sum())
+    ctr_pct = (total_clicks / total_impressions * 100) if total_impressions else 0.0
+    cpc = (total_cost / total_clicks) if total_clicks else 0.0
+
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("총 비용", f"{total_cost:,}원")
     c2.metric("총 매출", f"{total_rev:,}원")
     c3.metric("ROAS", f"{roas:.2f}")
     c4.metric("총 전환", f"{total_conv:,}")
+
+    d1, d2, d3, d4 = st.columns(4)
+    d1.metric("총 클릭수", f"{total_clicks:,}")
+    d2.metric("총 노출수", f"{total_impressions:,}")
+    d3.metric("평균 CTR", f"{ctr_pct:.2f}%")
+    d4.metric("평균 CPC", f"{cpc:,.0f}원")
 
     st.subheader("일별 추이")
     # groupby(시리즈)는 pandas 버전에 따라 첫 열 이름이 date가 아닐 수 있어 KeyError 발생 → 명시 열로 일 단위 집계
