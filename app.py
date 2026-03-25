@@ -1,13 +1,14 @@
 """
-마케팅 일별 리포트 대시보드 (SQLite + Streamlit)
+우리팀 광고 대시보드 (SQLite + Streamlit)
 실행: streamlit run app.py
 """
 from __future__ import annotations
 
 import hashlib
+import io
 import sqlite3
 import time
-import io
+from datetime import date
 from pathlib import Path
 
 import numpy as np
@@ -88,8 +89,17 @@ def load_report_data(db_path_str: str) -> pd.DataFrame:
 
 
 def render_login() -> None:
-    st.sidebar.markdown("로그인 후 **사이드바**에서 기간·채널·캠페인 필터를 조정할 수 있습니다.")
-    st.title("로그인")
+    today = date.today()
+    st.sidebar.markdown("**마케팅팀 v1.0**")
+    st.sidebar.caption(f"{today.year}년 {today.month:02d}월 {today.day:02d}일")
+    st.sidebar.divider()
+    st.sidebar.markdown(
+        "**우리팀 광고 대시보드**에 오신 것을 환영합니다. "
+        "로그인하면 일별 성과·주간 비교·CSV 업로드 등을 사용할 수 있습니다."
+    )
+    st.title("우리팀 광고 대시보드")
+    st.markdown("마케팅 캠페인 성과를 한곳에서 확인하세요.")
+    st.subheader("로그인")
     now = time.time()
     lock_until = float(st.session_state.lockout_until)
 
@@ -188,7 +198,7 @@ def render_csv_upload() -> None:
 
 
 def render_dashboard(df: pd.DataFrame) -> None:
-    st.title("마케팅 성과 대시보드")
+    st.title("우리팀 광고 대시보드")
     st.caption("`marketing.db` · `daily_report` 기준 일별·채널·캠페인 지표")
 
     min_d = df["date"].min().date()
@@ -197,6 +207,10 @@ def render_dashboard(df: pd.DataFrame) -> None:
     campaigns = sorted(df["campaign"].unique().tolist())
 
     with st.sidebar:
+        today = date.today()
+        st.markdown("**마케팅팀 v1.0**")
+        st.caption(f"{today.year}년 {today.month:02d}월 {today.day:02d}일")
+        st.divider()
         st.header("필터")
         dr = st.date_input(
             "기간",
@@ -430,8 +444,8 @@ def render_dashboard_main(f: pd.DataFrame) -> None:
 
 def main() -> None:
     st.set_page_config(
-        page_title="마케팅 대시보드",
-        page_icon="📊",
+        page_title="우리팀 광고 대시보드",
+        page_icon="📣",
         layout="wide",
         initial_sidebar_state="expanded",
     )
