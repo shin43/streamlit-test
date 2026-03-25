@@ -143,13 +143,14 @@ def render_dashboard(df: pd.DataFrame) -> None:
     c4.metric("총 전환", f"{total_conv:,}")
 
     st.subheader("일별 추이")
-    daily = f.groupby(f["date"].dt.date, as_index=False).agg(
+    # groupby(시리즈)는 pandas 버전에 따라 첫 열 이름이 date가 아닐 수 있어 KeyError 발생 → 명시 열로 일 단위 집계
+    by_day = f.assign(day=f["date"].dt.normalize())
+    daily = by_day.groupby("day", as_index=False).agg(
         cost=("cost", "sum"),
         revenue=("revenue", "sum"),
         conversions=("conversions", "sum"),
     )
-    daily = daily.rename(columns={"date": "일자"})
-    chart_df = daily.set_index("일자")[["cost", "revenue"]]
+    chart_df = daily.set_index("day")[["cost", "revenue"]]
     st.line_chart(chart_df)
 
     st.subheader("채널별 비용·매출")
