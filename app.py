@@ -9,6 +9,7 @@ import sqlite3
 import time
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
@@ -34,6 +35,41 @@ def init_auth_state() -> None:
         st.session_state.login_failed_count = 0
     if "lockout_until" not in st.session_state:
         st.session_state.lockout_until = 0.0
+
+
+def _agg_channel_week(df: pd.DataFrame) -> pd.DataFrame:
+    if df.empty:
+        return pd.DataFrame(columns=["channel", "cost", "revenue", "conversions", "roas"])
+    g = df.groupby("channel", as_index=False).agg(
+        cost=("cost", "sum"),
+        revenue=("revenue", "sum"),
+        conversions=("conversions", "sum"),
+    )
+    g["roas"] = np.where(g["cost"] > 0, g["revenue"] / g["cost"], 0.0)
+    return g
+
+
+def _weekly_delta_pct(curr: object, prev: object) -> np.ndarray:
+    c = np.asarray(curr, dtype=float)
+    p = np.asarray(prev, dtype=float)
+    out = np.full(c.shape, np.nan, dtype=float)
+    mask = p > 0
+    out[mask] = (c[mask] - p[mask]) / p[mask] * 100.0
+    return out
+
+
+def _style_delta_pct(v: object) -> str:
+    if v is None or (isinstance(v, float) and np.isnan(v)):
+        return ""
+    try:
+        x = float(v)
+    except (TypeError, ValueError):
+        return ""
+    if x > 0:
+        return "color: #16a34a; font-weight: 600"
+    if x < 0:
+        return "color: #dc2626; font-weight: 600"
+    return ""
 
 
 @st.cache_data
@@ -217,6 +253,100 @@ def render_dashboard(df: pd.DataFrame) -> None:
         .head(10)
     )
     st.bar_chart(top_c.set_index("campaign"))
+
+    st.subheader("주간 성과 비교")
+    f_w = f.assign(_d=f["date"].dt.normalize())
+    anchor = f_w["_d"].max()
+    this_start = anchor - pd.Timedelta(days=6)
+    prev_end = this_start - pd.Timedelta(days=1)
+    prev_start = prev_end - pd.Timedelta(days=6)
+    tw = f_w[(f_w["_d"] >= this_start) & (f_w["_d"] <= anchor)]
+    pw = f_w[(f_w["_d"] >= prev_start) & (f_w["_d"] <= prev_end)]
+    at = _agg_channel_week(tw).rename(
+        columns={
+            "cost": "cost_tw",
+            "revenue": "rev_tw",
+            "conversions": "conv_tw",
+            "roas": "roas_tw",
+        }
+    )
+    ap = _agg_channel_week(pw).rename(
+        columns={
+            "cost": "cost_pw",
+            "revenue": "rev_pw",
+            "conversions": "conv_pw",
+            "roas": "roas_pw",
+        }
+    )
+    cmp = at.merge(ap, on="channel", how="outer")
+    num_cols = [
+        "cost_tw",
+        "rev_tw",
+        "conv_tw",
+        "roas_tw",
+        "cost_pw",
+        "rev_pw",
+        "conv_pw",
+        "roas_pw",
+    ]
+    for c in num_cols:
+        if c in cmp.columns:
+            cmp[c] = cmp[c].fillna(0)
+    cmp["d_cost"] = _weekly_delta_pct(cmp["cost_tw"].to_numpy(), cmp["cost_pw"].to_numpy())
+    cmp["d_rev"] = _weekly_delta_pct(cmp["rev_tw"].to_numpy(), cmp["rev_pw"].to_numpy())
+    cmp["d_roas"] = _weekly_delta_pct(cmp["roas_tw"].to_numpy(), cmp["roas_pw"].to_numpy())
+    cmp["d_conv"] = _weekly_delta_pct(cmp["conv_tw"].to_numpy(), cmp["conv_pw"].to_numpy())
+    cmp = cmp.sort_values("channel", ignore_index=True)
+    week_tbl = pd.DataFrame(
+        {
+            "채널": cmp["channel"],
+            "광고비(최근7일)": cmp["cost_tw"],
+            "광고비(전주)": cmp["cost_pw"],
+            "광고비 증감(%)": cmp["d_cost"],
+            "매출(최근7일)": cmp["rev_tw"],
+            "매출(전주)": cmp["rev_pw"],
+            "매출 증감(%)": cmp["d_rev"],
+            "ROAS(최근7일)": cmp["roas_tw"],
+            "ROAS(전주)": cmp["roas_pw"],
+            "ROAS 증감(%)": cmp["d_roas"],
+            "전환(최근7일)": cmp["conv_tw"],
+            "전환(전주)": cmp["conv_pw"],
+            "전환 증감(%)": cmp["d_conv"],
+        }
+    )
+    rng_caption = (
+        f"최근 7일: {this_start.date()} ~ {anchor.date()} · "
+        f"전주 7일: {prev_start.date()} ~ {prev_end.date()} "
+        "(필터 적용 데이터 기준, 종료일은 필터 내 마지막 일자)"
+    )
+    st.caption(rng_caption)
+    pct_cols = [
+        "광고비 증감(%)",
+        "매출 증감(%)",
+        "ROAS 증감(%)",
+        "전환 증감(%)",
+    ]
+    styled_week = (
+        week_tbl.style.map(_style_delta_pct, subset=pct_cols)
+        .format(
+            {
+                "광고비(최근7일)": "{:,.0f}",
+                "광고비(전주)": "{:,.0f}",
+                "매출(최근7일)": "{:,.0f}",
+                "매출(전주)": "{:,.0f}",
+                "ROAS(최근7일)": "{:.2f}",
+                "ROAS(전주)": "{:.2f}",
+                "전환(최근7일)": "{:,.0f}",
+                "전환(전주)": "{:,.0f}",
+                "광고비 증감(%)": "{:+.1f}%",
+                "매출 증감(%)": "{:+.1f}%",
+                "ROAS 증감(%)": "{:+.1f}%",
+                "전환 증감(%)": "{:+.1f}%",
+            },
+            na_rep="—",
+        )
+    )
+    st.dataframe(styled_week, use_container_width=True, hide_index=True)
 
     st.subheader("필터 적용 데이터")
     show = f.copy()
