@@ -10,6 +10,7 @@ import time
 from pathlib import Path
 
 import pandas as pd
+import plotly.graph_objects as go
 import streamlit as st
 
 DB_PATH = Path(__file__).resolve().parent / "marketing.db"
@@ -153,7 +154,7 @@ def render_dashboard(df: pd.DataFrame) -> None:
     d3.metric("평균 CTR", f"{ctr_pct:.2f}%")
     d4.metric("평균 CPC", f"{cpc:,.0f}원")
 
-    st.subheader("일별 추이")
+    st.subheader("광고비 vs 매출")
     # groupby(시리즈)는 pandas 버전에 따라 첫 열 이름이 date가 아닐 수 있어 KeyError 발생 → 명시 열로 일 단위 집계
     by_day = f.assign(day=f["date"].dt.normalize())
     daily = by_day.groupby("day", as_index=False).agg(
@@ -161,8 +162,45 @@ def render_dashboard(df: pd.DataFrame) -> None:
         revenue=("revenue", "sum"),
         conversions=("conversions", "sum"),
     )
-    chart_df = daily.set_index("day")[["cost", "revenue"]]
-    st.line_chart(chart_df)
+    _color_cost = "#4834d4"
+    _color_rev = "#f0932b"
+    fig_vs = go.Figure()
+    fig_vs.add_trace(
+        go.Bar(
+            x=daily["day"],
+            y=daily["cost"],
+            name="광고비",
+            marker_color=_color_cost,
+        )
+    )
+    fig_vs.add_trace(
+        go.Scatter(
+            x=daily["day"],
+            y=daily["revenue"],
+            name="매출",
+            mode="lines+markers",
+            line=dict(color=_color_rev, width=2),
+            marker=dict(color=_color_rev, size=7),
+        )
+    )
+    fig_vs.update_layout(
+        xaxis_title="일자",
+        yaxis_title="금액 (원)",
+        legend=dict(
+            x=1,
+            y=1,
+            xref="paper",
+            yref="paper",
+            xanchor="right",
+            yanchor="top",
+            bgcolor="rgba(255,255,255,0.85)",
+        ),
+        bargap=0.2,
+        hovermode="x unified",
+        margin=dict(l=60, r=24, t=48, b=56),
+        height=420,
+    )
+    st.plotly_chart(fig_vs, use_container_width=True)
 
     st.subheader("채널별 비용·매출")
     by_ch = f.groupby("channel", as_index=False).agg(
